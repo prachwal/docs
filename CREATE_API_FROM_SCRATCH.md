@@ -25,74 +25,91 @@ Jeśli używasz TypeScript, zainstaluj także typy:
 npm install -D @types/express @types/node
 ```
 
-## 2) Struktura plików (proponowana)
+## 2) Struktura plików (proponowana) — dostosowana do tego repozytorium
 
-- `api/` — katalog z aplikacją Express
-  - `api/index.js` — entrypoint serwera (eksportuje app / handler)
-  - `api/routes.js` — router z endpointami
-  - `api/vercel.js` — (opcjonalnie) wrapper kompatybilny z Vercel
+- `api/` — katalog z aplikacją Express napisaną w TypeScript
+  - `api/index.ts` — entrypoint serwera (eksportuje `app` i uruchamia server w trybie lokalnym)
+  - `api/routes.ts` — router z endpointami
+  - `api/vercel.ts` — wrapper kompatybilny z Vercel (eksportuje domyślny handler)
+  - `api/tsconfig.json` — konfiguracja TypeScript dla serwera
 - `src/` — aplikacja klienta (Vite)
 - `dist/client` — wynik builda klienta
 
-## 3) Przykładowy minimalny serwer — plik `api/index.js`
+### 3) Rzeczywisty serwer tego repozytorium — `api/index.ts`
 
-Plik implementuje Express i montuje router pod `/api`. W dev użyj Vite w middleware mode, w prod serwuj statyczne pliki z `dist/client`.
+W tym projekcie serwer API jest napisany w TypeScript i używa `winston` do logowania.
+Główne elementy:
 
-```javascript
-// api/index.js
-import express from 'express';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import apiRouter from './routes.js';
+- eksportuje domyślnie `app` (Express) — przydatne do testów i do wrappera Vercel;
+- uruchamia nasłuch tylko, gdy nie jesteśmy w środowisku Vercel (`if (!process.env.VERCEL)`);
+- domyślny port to 3000 (można go nadpisać przez `PORT`).
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+Przykładowe fragmenty (z repo):
+
+```ts
+// api/index.ts
+import express from "express";
+import apiRouter from "./routes.js";
+import winston from "winston";
+
 const app = express();
 
-app.use(express.json());
-app.use('/api', apiRouter);
+// request logging middleware i konfiguracja winston
+// ...
 
-// Fallback: serwuj index.html (client-side app)
-app.use('*', (req, res) => {
-  res.sendFile(new URL('../dist/client/index.html', import.meta.url));
-});
+app.use(express.json());
+app.use("/api", apiRouter);
+
+// error handling middleware, zwraca JSON z `api: 'api'` i `version: 'v2'`
 
 export default app;
 
-// Lokalny uruchamianie:
 if (!process.env.VERCEL) {
-  const port = process.env.PORT || 5173;
-  app.listen(port, () => console.log(`Listening ${port}`));
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => /* logger.info(`Listening: ${port}`) */ null);
 }
 ```
 
-## 4) Przykładowy router — plik `api/routes.js`
+## 4) Rzeczywisty router — `api/routes.ts`
 
-```javascript
-// api/routes.js
-import express from 'express';
+W tym repo router znajduje się w `api/routes.ts` i zwraca dodatkowe pola `api` i `version`.
+
+Przykład z repo:
+
+```ts
+// api/routes.ts
+import express, { Request, Response } from "express";
+
 const router = express.Router();
 
-router.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+router.get("/health", (req: Request, res: Response) => {
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    api: "api",
+    version: "v2",
+  });
 });
 
-router.get('/hello', (req, res) => {
-  res.json({ message: 'hello' });
+router.get("/hello", (req: Request, res: Response) => {
+  res.json({ message: "hello", api: "api", version: "v2" });
 });
 
 export default router;
 ```
 
-## 5) (Opcjonalnie) Wrapper dla Vercel — `api/vercel.js`
+## 5) Wrapper dla Vercel — `api/vercel.ts`
 
-Jeżeli deployujesz na Vercel i chcesz, żeby `api/index.js` działało jako funkcja, dodaj mały wrapper, który wywoła Express app jako handler:
+Repo zawiera `api/vercel.ts` który eksportuje domyślną funkcję wywołującą Express `app`.
+To pozwala użyć aplikacji jako funkcji serverless na Vercel.
 
-```javascript
-// api/vercel.js
-import app from './index.js';
+Przykład z repo:
 
-export default async function handler(req, res) {
-  return app(req, res);
+```ts
+import app from "./index.js";
+
+export default async function handler(req: any, res: any) {
+  return (app as any)(req, res);
 }
 ```
 
@@ -141,43 +158,49 @@ To podejście umożliwia pełną kontrolę nad routingiem i fallbackami w Expres
 - Testuj reguły `vercel.json` lokalnie przy pomocy `vercel dev` — symuluje routing i funkcje.
 - Możesz również mapować pojedyncze endpointy (np. `/auth/verify`) do osobnych funkcji (np. `api/auth/verify.js`) zamiast jednej dużej aplikacji Express — to zazwyczaj poprawia skalowalność.
 
-## 6) Skrypty npm (package.json)
+## 6) Skrypty npm (aktualne w tym repo)
 
-Dodaj do `package.json` przynajmniej:
+Ten projekt ma już skonfigurowane skrypty związane z API i buildem. Najważniejsze to:
 
-```json
-{
-  "scripts": {
-    "dev": "node api/index.js",
-    "build:client": "vite build --outDir dist/client",
-    "build": "npm run build:client",
-    "preview": "cross-env NODE_ENV=production node api/index.js"
-  }
-}
-```
+- `npm run dev` — uruchamia skrypt `scripts/dev-start.sh` (dev klient + inne ustawienia projektu)
+- `npm run build` — uruchamia `scripts/build-full.sh` (buduje całość projektu)
+- `npm run preview` — `vite preview` (podgląd klienta)
+- `npm run api` (alias `api:start`) — `bash ./scripts/start-api.sh` (uruchamia lokalny serwer API)
+- `npm run api:kill` — zatrzymuje serwer (`scripts/kill-api.sh`)
+- `npm run api:logs` — śledzi logi: `tail -n 200 -f logs/api-server.log`
+- `npm run api:v2:build` — kompiluje TypeScript w `api/` (używa `tsc -p api/tsconfig.json`)
+- `npm run api:v2:start` — uruchamia skompilowany serwer: `PORT=3000 node api/dist/index.js`
 
-Jeśli planujesz SSR, dodaj `build:server` zgodnie z projektem.
-
-## 7) Budowanie i uruchamianie lokalne
-
-1. Build klienta:
+Przykładowe użycie:
 
 ```bash
-npm run build:client
+# build api TypeScript -> api/dist
+npm run api:v2:build
+
+# uruchom skompilowany serwer (port 3000 domyślnie)
+npm run api:v2:start
 ```
 
-2. Uruchom serwer w trybie preview (production):
+## 7) Budowanie i uruchamianie lokalne — jak to zrobić tutaj
+
+1) Skompiluj API (TypeScript -> `api/dist`):
 
 ```bash
-npm run preview
-# lub bez cross-env (Linux): NODE_ENV=production node api/index.js
+npm run api:v2:build
 ```
 
-3. Development (z Vite middleware):
+2) Uruchom skompilowany serwer API (domyślnie na porcie 3000):
 
 ```bash
+npm run api:v2:start
+```
+
+3) Alternatywnie uruchom lokalny skrypt (jeżeli wolisz dev script który może uruchamiać klienta i serwer):
+
+```bash
+npm run api
+# lub
 npm run dev
-# W tym trybie możesz skonfigurować index.js aby tworzył Vite dev server w middlewareMode
 ```
 
 ## 8) Prostey endpoint "hello" — test lokalny
@@ -185,8 +208,8 @@ npm run dev
 Po uruchomieniu serwera (np. `npm run dev` lub `npm run preview`) sprawdź:
 
 ```bash
-curl -s http://localhost:5173/api/hello | jq
-# expected: { "message": "hello" }
+curl -s http://localhost:3000/api/hello | jq
+# expected: { "message": "hello", "api": "api", "version": "v2" }
 ```
 
 Jeśli nie masz `jq`, rezultat zobaczysz surowo.
@@ -231,10 +254,13 @@ test('GET /api/hello', async () => {
 Instalacja testowych zależności:
 
 ```bash
+# zależności do testów
 npm install -D supertest vitest
-```
 
-Uruchom testy: `npx vitest`.
+# przykładowy test uruchamiający app z api/index.ts (bez startowania listenera)
+# i uruchomienie testów:
+npx vitest
+```
 
 ## 11) Dobre praktyki i uwagi
 
